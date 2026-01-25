@@ -9,8 +9,11 @@
                  [ring/ring-jetty-adapter "1.9.6"]
                  [ring/ring-json "0.5.1"]
                  [compojure "1.7.0"]
-                 [cheshire "5.11.0"]]
+                 [cheshire "5.11.0"]
+                 [org.clojure/tools.logging "1.2.4"]
+                 [ch.qos.logback/logback-classic "1.2.11"]]
   :main ^:skip-aot agent-intergraph.core
   :target-path "target/%s"
+  :aliases {"start-agent" ["run" "9090"]}
   :profiles {:uberjar {:aot :all
                        :jvm-opts ["-Dclojure.compiler.direct-linking=true"]}})
