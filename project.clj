@@ -15,5 +15,6 @@
   :main ^:skip-aot agent-intergraph.core
   :target-path "target/%s"
   :aliases {"start-agent" ["run" "9090"]}
-  :profiles {:uberjar {:aot :all
+  :profiles {:dev {:dependencies [[ring/ring-mock "0.4.0"]]}
+             :uberjar {:aot :all
                        :jvm-opts ["-Dclojure.compiler.direct-linking=true"]}})
