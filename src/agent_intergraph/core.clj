@@ -75,6 +75,7 @@
   ;; Timing & Detection
   :last-progress-token-change-time (System/currentTimeMillis)
   :heartbeats-without-progress 0            ; for wedge detection
+  :load 0.0                                 ; Agent load (0.0-1.0)
   :status :degraded}))                      ; legacy field
 
 ;; --- Validation ---
@@ -96,7 +97,8 @@
   "Validate agent state before sending heartbeat. Returns error map or nil."
   (let [mode (:mode state)
         idle-reason (:idle-reason state)
-        health (:health state)]
+        health (:health state)
+        load (:load state)]
     (cond
       (not (contains? valid-modes mode))
       {:error "invalid-mode" :details {:mode mode}}
@@ -106,6 +108,9 @@
       
       (not (valid-mode-idle-reason-combo? mode idle-reason))
       {:error "invalid-idle-reason" :details {:mode mode :idle-reason idle-reason}}
+
+      (not (number? load))
+      {:error "invalid-load" :details {:load load}}
       
       :else nil)))
 
@@ -130,6 +135,16 @@
     (catch Exception e
       (log/error e "Failed to load persisted agent ID")
       nil)))
+
+(defn- delete-persisted-agent-id! []
+  (try
+    (if (.exists agent-id-file)
+      (do
+        (io/delete-file agent-id-file)
+        (log/info "Deleted stale persisted agent ID file"))
+      true)
+    (catch Exception e
+      (log/error e "Failed to delete persisted agent ID file"))))
 
 (defn- get-checkpoint-file [agent-id]
   (io/file (System/getProperty "user.home") (str ".agent-checkpoint-" agent-id)))
@@ -349,7 +364,8 @@
                         error-code (:error body)]
                     (if (= (str error-code) "agent-not-found")
                       (do
-                        (log/error "Agent identity lost (404 agent-not-found). Attempting re-bootstrap...")
+                        (log/error "Agent identity lost (404 agent-not-found). Clearing local ID and attempting re-bootstrap...")
+                        (delete-persisted-agent-id!)
                         (swap! agent-state assoc :id nil :health :degraded)
                         (future
                           (Thread/sleep 1000)

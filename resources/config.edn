@@ -1,0 +1,5 @@
+{:mom-url "http://localhost:8080"
+ :heartbeat-interval-ms 5000
+ :agent-host "localhost"
+ :agent-port 9090
+ :wedge-heartbeat-threshold 10}
