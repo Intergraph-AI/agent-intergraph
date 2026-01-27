@@ -433,10 +433,11 @@
     (log/info "Task queued. Current queue size:" (count (:task-queue @agent-state)))))
 
 (defn- process-next-task []
-  "Process next task from queue if idle."
+  "Process next task from queue if idle and healthy."
   (let [state @agent-state]
     (if (and (nil? (:current-task state))
-             (not (empty? (:task-queue state))))
+             (not (empty? (:task-queue state)))
+             (= :healthy (:health state)))
       (let [task (peek (:task-queue state))
             _ (swap! agent-state update :task-queue pop)
             task-id (:task-id task)
@@ -467,7 +468,19 @@
 ;; --- Event Handling ---
 
 (defn handle-event [request]
-  (let [event (:body request)
+  (let [raw-body (:body request)
+        event (cond
+                (map? raw-body) raw-body
+                
+                (or (instance? java.io.InputStream raw-body)
+                    (instance? java.io.Reader raw-body))
+                (try
+                  (json/parse-stream (io/reader raw-body) true)
+                  (catch Exception e
+                    (log/warn "Failed to parse request body as JSON:" e)
+                    nil))
+                
+                :else nil)
         event-type (:event/type event)]
     (log/info "Received event:" event-type "Payload:" event)
     
@@ -492,11 +505,25 @@
   (GET "/v1/status" [] {:status 200 :body @agent-state})
   
   (POST "/v1/lifecycle" request 
-    (let [cmd (get-in request [:body :command])
-          new-status (if (= cmd "start") :healthy :degraded)]
-      (swap! agent-state assoc :health new-status)
-      (log/info "Lifecycle command received:" cmd "New health:" new-status)
-      {:status 200 :body {:status (name new-status)}}))
+    (let [cmd (get-in request [:body :command])]
+      (log/info "Lifecycle command received:" cmd)
+      (cond
+        (= cmd "start")
+        (do
+          (swap! agent-state assoc :health :healthy)
+          (log/info "Agent started. Health set to :healthy.")
+          {:status 200 :body {:status "healthy"}})
+        
+        (= cmd "stop")
+        (do
+          (swap! agent-state assoc :health :degraded)
+          (log/info "Agent stopped. Health set to :degraded.")
+          {:status 200 :body {:status "degraded"}})
+        
+        :else
+        (do
+          (log/warn "Unknown lifecycle command:" cmd)
+          {:status 400 :body {:error "unknown-command" :command cmd}}))))
   
   (POST "/v1/task/complete" request
     (let [body (:body request)
