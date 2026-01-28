@@ -74,6 +74,7 @@
    :task-queue PersistentQueue/EMPTY
    :last-progress-token-change-time (System/currentTimeMillis)
    :heartbeats-without-progress 0
+   :recovery-count 0
    :load 0.0})
 
 ;; --- Heartbeat & Lease ---
@@ -94,14 +95,20 @@
     (log/info "Attempting Agent Recovery for ID:" agent-id)
     (try
       (let [resp (http/post url {:accept :json :content-type :json :throw-exceptions false})
+            status (:status resp)
             body (json/parse-string (:body resp) true)]
-        (if (or (:success body) (= (:status resp) 200))
+        (log/info "Recovery response status:" status "body:" body)
+        (if (or (:success body) (= status 200))
           (do
             (log/info "Recovery successful! Agent re-authorized.")
-            (swap! agent-state assoc :health :healthy)
+            ;; If recovery returns a lease, use it
+            (if-let [lease-until (:lease/granted-until body)]
+              (let [expiry-ms (.toEpochMilli (Instant/parse lease-until))]
+                (swap! agent-state assoc :lease-expires-at expiry-ms :health :healthy :recovery-count 0))
+              (swap! agent-state assoc :health :healthy :recovery-count 0))
             true)
           (do
-            (log/error "Recovery failed. Response:" (:body resp))
+            (log/error "Recovery failed. Status:" status "Response:" (:body resp))
             false)))
       (catch Exception e
         (log/error e "Recovery connection failed")
@@ -138,7 +145,7 @@
                     commands (:commands body)]
                 (if lease-until
                   (let [expiry-ms (.toEpochMilli (Instant/parse lease-until))]
-                    (swap! agent-state assoc :lease-expires-at expiry-ms)
+                    (swap! agent-state assoc :lease-expires-at expiry-ms :recovery-count 0)
                     (log/debug "Heartbeat success. Lease renewed until:" lease-until)
                     
                     (when commands
@@ -147,6 +154,7 @@
                           (case cmd-type
                             "stop" (do (log/warn "Stop command received") (System/exit 0))
                             "pause" (swap! agent-state assoc :mode :idle :idle-reason :blocked)
+                            "continue" (log/debug "Continue command received")
                             (log/warn "Unknown orchestrator command:" cmd-type))))))
                   (log/warn "Heartbeat response missing lease/granted-until")))
               
@@ -155,7 +163,14 @@
                 (if (= (:error body) "lease-expired-no-restart")
                   (do
                     (log/warn "MoM rejected heartbeat: Lease expired and locked. Triggering recovery...")
-                    (recover-agent! agent-state config))
+                    (swap! agent-state update :recovery-count inc)
+                    (if (>= (:recovery-count @agent-state) 3)
+                      (do
+                        (log/error "Circuit breaker triggered: Multiple recovery failures. Re-bootstrapping identity.")
+                        (delete-persisted-agent-id!)
+                        (swap! agent-state assoc :id nil :health :degraded :recovery-count 0)
+                        (future (Thread/sleep 1000) (bootstrap-identity! agent-state config)))
+                      (recover-agent! agent-state config)))
                   (log/error "Heartbeat validation failed by MoM:" raw-body)))
 
               (= status 404)
@@ -170,11 +185,12 @@
               
               :else
               (log/error "Heartbeat failed! Status:" status "Response:" raw-body)))
-                      (catch Exception e
-                        (log/error e "Heartbeat connection failed")
-                        (swap! agent-state assoc :health :degraded)))))))
-          
-          (defn start-heartbeat-loop! [agent-state config]  (future
+          (catch Exception e
+            (log/error e "Heartbeat connection failed")
+            (swap! agent-state assoc :health :degraded)))))))
+
+(defn start-heartbeat-loop! [agent-state config]
+  (future
     (while true
       (try
         (if-let [id (:id @agent-state)]
