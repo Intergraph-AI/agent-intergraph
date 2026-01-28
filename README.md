@@ -12,5 +12,5 @@ This project implements a standalone Agent that communicates with the MoM (Mind 
 
 ## Running the Agent
 ```bash
-lein run 9090
+lein start-test-agent
 ```

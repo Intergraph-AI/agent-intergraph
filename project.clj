@@ -14,7 +14,7 @@
                  [ch.qos.logback/logback-classic "1.2.11"]]
   :main ^:skip-aot agent-intergraph.core
   :target-path "target/%s"
-  :aliases {"start-agent" ["run" "9090"]}
+  :aliases {"start-test-agent" ["run" "9090"]}
   :profiles {:dev {:dependencies [[ring/ring-mock "0.4.0"]]}
              :uberjar {:aot :all
                        :jvm-opts ["-Dclojure.compiler.direct-linking=true"]}})
